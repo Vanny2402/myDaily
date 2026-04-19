@@ -1,11 +1,15 @@
 import re
 import json
+import requests
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Query
 
 # ==============================
 # CONFIG
 # ==============================
+TOKEN = "8753319762:AAEfunhd45eHtyvS5Z7EaTZd0LkoJXcA8PI"
+TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
+
 DATA_FILE = "data.json"
 DEFAULT_USER_ID = "1"
 
@@ -55,7 +59,6 @@ def parse_message(text):
     results = []
     for cat, amt, symbol in matches:
         amt = float(amt.replace(",", ""))
-
         currency = "KHR" if symbol == "៛" else "USD"
 
         if amt.is_integer():
@@ -136,14 +139,13 @@ def reset_month(user_key):
     return False
 
 # ==============================
-# FORMATTERS (KHMER PRESERVED)
+# FORMATTERS
 # ==============================
 def format_entries(entries, show_date=False):
     lines = []
 
     for e in entries:
         symbol = CURRENCY_SYMBOL.get(e["currency"], e["currency"])
-
         amount = f"{e['amount']:,.0f}" if isinstance(e["amount"], int) else f"{e['amount']:.2f}"
 
         if show_date:
@@ -157,87 +159,88 @@ def format_total(khr, usd):
     return f"**💰 សរុប: {khr:,.0f} ៛ | {usd:.2f} $**"
 
 # ==============================
-# CORE LOGIC (REUSABLE)
+# REPORT BUILDERS
 # ==============================
 def build_today_report(user_key):
     entries = get_today_entries(user_key)
     khr, usd = calculate(entries)
-
     return f"📊 ថ្ងៃនេះ\n\n{format_entries(entries)}\n\n{format_total(khr, usd)}"
 
 def build_month_report(user_key):
     entries = get_month_entries(user_key)
     khr, usd = calculate(entries)
-
     return f"📊 ខែនេះ\n\n{format_entries(entries, True)}\n\n{format_total(khr, usd)}"
 
 # ==============================
-# API ENDPOINTS
+# TELEGRAM SEND
 # ==============================
+def send_message(chat_id, text):
+    requests.post(f"{TELEGRAM_API}/sendMessage", json={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    })
 
-@app.post("/add")
-def api_add(
-    text: str,
-    user_id: str = Query(default=DEFAULT_USER_ID)
-):
-    user_key = get_user_key(user_id)
+# ==============================
+# TELEGRAM WEBHOOK
+# ==============================
+@app.post("/webhook")
+async def telegram_webhook(update: dict):
+    if "message" not in update:
+        return {"ok": True}
 
+    message = update["message"]
+    chat_id = message["chat"]["id"]
+    text = message.get("text", "")
+
+    user_key = get_user_key(chat_id)
+
+    # COMMANDS
+    if text == "/today":
+        send_message(chat_id, build_today_report(user_key))
+        return {"ok": True}
+
+    if text == "/this_month":
+        send_message(chat_id, build_month_report(user_key))
+        return {"ok": True}
+
+    if text == "/reset_today":
+        send_message(chat_id, "🧹 ទិន្នន័យត្រូវបានសម្អាត." if reset_today(user_key) else "Nothing to reset")
+        return {"ok": True}
+
+    if text == "/reset_this_month":
+        send_message(chat_id, "🧹 ទិន្នន័យខែនេះត្រូវបានសម្អាត." if reset_month(user_key) else "Nothing to reset")
+        return {"ok": True}
+
+    # NORMAL MESSAGE
     parsed = parse_message(text)
     error = validate(text, parsed)
 
     if error:
-        raise HTTPException(status_code=400, detail=error)
+        send_message(chat_id, error)
+        return {"ok": True}
 
     if not parsed:
-        raise HTTPException(status_code=400, detail="Invalid input")
+        return {"ok": True}
 
     add_expense(user_key, parsed)
-
     khr, usd = calculate(parsed)
 
-    return {
-        "message": f"➕ បានបញ្ចូលជោគជ័យ: {khr:,.0f} ៛ | {usd:.2f} $",
-        "hint": "ដើម្បីពិនិត្យទិន្នន័យថ្ងៃនេះ → /today | ខែនេះ → /this_month"
-    }
+    send_message(
+        chat_id,
+        f"➕ បានបញ្ចូលជោគជ័យ: {khr:,.0f} ៛ | {usd:.2f} $\n\n"
+        f"ដើម្បីពិនិត្យទិន្នន័យថ្ងៃនេះ ចុច /today\n\n"
+        f"ដើម្បីពិនិត្យទិន្នន័យខែនេះ /this_month"
+    )
 
+    return {"ok": True}
 
+# ==============================
+# API (OPTIONAL)
+# ==============================
 @app.get("/today")
 def api_today(user_id: str = Query(default=DEFAULT_USER_ID)):
-    user_key = get_user_key(user_id)
-
-    return {
-        "report": build_today_report(user_key)
-    }
-
-
-@app.get("/this_month")
-def api_this_month(user_id: str = Query(default=DEFAULT_USER_ID)):
-    user_key = get_user_key(user_id)
-
-    return {
-        "report": build_month_report(user_key)
-    }
-
-
-@app.delete("/reset_today")
-def api_reset_today(user_id: str = Query(default=DEFAULT_USER_ID)):
-    user_key = get_user_key(user_id)
-
-    if reset_today(user_key):
-        return {"message": "🧹 ទិន្នន័យត្រូវបានសម្អាត."}
-
-    raise HTTPException(status_code=404, detail="Nothing to reset")
-
-
-@app.delete("/reset_this_month")
-def api_reset_this_month(user_id: str = Query(default=DEFAULT_USER_ID)):
-    user_key = get_user_key(user_id)
-
-    if reset_month(user_key):
-        return {"message": "🧹 ទិន្នន័យខែនេះត្រូវបានសម្អាត."}
-
-    raise HTTPException(status_code=404, detail="Nothing to reset")
-
+    return {"report": build_today_report(get_user_key(user_id))}
 
 # ==============================
 # STARTUP
