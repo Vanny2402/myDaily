@@ -1,12 +1,13 @@
 import re
 import json
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 # ==============================
-# CONFIG (UNCHANGED)
+# CONFIG
 # ==============================
 DATA_FILE = "data.json"
+DEFAULT_USER_ID = "1"
 
 CURRENCY_SYMBOL = {
     "KHR": "៛",
@@ -16,7 +17,7 @@ CURRENCY_SYMBOL = {
 app = FastAPI()
 
 # ==============================
-# STORAGE (UNCHANGED)
+# STORAGE
 # ==============================
 data = {}
 
@@ -32,6 +33,9 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(data, f)
 
+# ==============================
+# HELPERS
+# ==============================
 def get_today():
     return datetime.now().strftime("%Y-%m-%d")
 
@@ -39,10 +43,10 @@ def get_month():
     return datetime.now().strftime("%Y-%m")
 
 def get_user_key(user_id):
-    return str(user_id)
+    return str(user_id or DEFAULT_USER_ID)
 
 # ==============================
-# PARSER (UNCHANGED)
+# PARSER
 # ==============================
 def parse_message(text):
     pattern = r"([^\d]+?)\s*(\d+(?:[.,]\d+)?)\s*(៛|\$)"
@@ -66,7 +70,7 @@ def parse_message(text):
     return results
 
 # ==============================
-# VALIDATION (UNCHANGED)
+# VALIDATION
 # ==============================
 def validate(text, parsed):
     if parsed:
@@ -81,7 +85,7 @@ def validate(text, parsed):
     return None
 
 # ==============================
-# DATA OPERATIONS (UNCHANGED)
+# DATA OPERATIONS
 # ==============================
 def add_expense(user_key, entries):
     today = get_today()
@@ -132,7 +136,7 @@ def reset_month(user_key):
     return False
 
 # ==============================
-# FORMATTERS (UNCHANGED TEXT)
+# FORMATTERS (KHMER PRESERVED)
 # ==============================
 def format_entries(entries, show_date=False):
     lines = []
@@ -153,11 +157,31 @@ def format_total(khr, usd):
     return f"**💰 សរុប: {khr:,.0f} ៛ | {usd:.2f} $**"
 
 # ==============================
-# API ENDPOINTS (NEW)
+# CORE LOGIC (REUSABLE)
+# ==============================
+def build_today_report(user_key):
+    entries = get_today_entries(user_key)
+    khr, usd = calculate(entries)
+
+    return f"📊 ថ្ងៃនេះ\n\n{format_entries(entries)}\n\n{format_total(khr, usd)}"
+
+def build_month_report(user_key):
+    entries = get_month_entries(user_key)
+    khr, usd = calculate(entries)
+
+    return f"📊 ខែនេះ\n\n{format_entries(entries, True)}\n\n{format_total(khr, usd)}"
+
+# ==============================
+# API ENDPOINTS
 # ==============================
 
 @app.post("/add")
-def api_add(user_id: str, text: str):
+def api_add(
+    text: str,
+    user_id: str = Query(default=DEFAULT_USER_ID)
+):
+    user_key = get_user_key(user_id)
+
     parsed = parse_message(text)
     error = validate(text, parsed)
 
@@ -167,7 +191,6 @@ def api_add(user_id: str, text: str):
     if not parsed:
         raise HTTPException(status_code=400, detail="Invalid input")
 
-    user_key = get_user_key(user_id)
     add_expense(user_key, parsed)
 
     khr, usd = calculate(parsed)
@@ -179,31 +202,25 @@ def api_add(user_id: str, text: str):
 
 
 @app.get("/today")
-def api_today(user_id: str):
+def api_today(user_id: str = Query(default=DEFAULT_USER_ID)):
     user_key = get_user_key(user_id)
 
-    entries = get_today_entries(user_key)
-    khr, usd = calculate(entries)
-
     return {
-        "report": f"📊 ថ្ងៃនេះ\n\n{format_entries(entries)}\n\n{format_total(khr, usd)}"
+        "report": build_today_report(user_key)
     }
 
 
 @app.get("/this_month")
-def api_this_month(user_id: str):
+def api_this_month(user_id: str = Query(default=DEFAULT_USER_ID)):
     user_key = get_user_key(user_id)
 
-    entries = get_month_entries(user_key)
-    khr, usd = calculate(entries)
-
     return {
-        "report": f"📊 ខែនេះ\n\n{format_entries(entries, True)}\n\n{format_total(khr, usd)}"
+        "report": build_month_report(user_key)
     }
 
 
 @app.delete("/reset_today")
-def api_reset_today(user_id: str):
+def api_reset_today(user_id: str = Query(default=DEFAULT_USER_ID)):
     user_key = get_user_key(user_id)
 
     if reset_today(user_key):
@@ -213,7 +230,7 @@ def api_reset_today(user_id: str):
 
 
 @app.delete("/reset_this_month")
-def api_reset_this_month(user_id: str):
+def api_reset_this_month(user_id: str = Query(default=DEFAULT_USER_ID)):
     user_key = get_user_key(user_id)
 
     if reset_month(user_key):
