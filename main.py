@@ -1,20 +1,11 @@
 import re
 import json
 from datetime import datetime
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    CommandHandler,
-    ContextTypes,
-    filters
-)
+from fastapi import FastAPI, HTTPException
 
 # ==============================
-# CONFIG
+# CONFIG (UNCHANGED)
 # ==============================
-TOKEN = "8753319762:AAEfunhd45eHtyvS5Z7EaTZd0LkoJXcA8PI"
-MY_USER_ID = None
 DATA_FILE = "data.json"
 
 CURRENCY_SYMBOL = {
@@ -22,8 +13,10 @@ CURRENCY_SYMBOL = {
     "USD": "$"
 }
 
+app = FastAPI()
+
 # ==============================
-# STORAGE
+# STORAGE (UNCHANGED)
 # ==============================
 data = {}
 
@@ -49,7 +42,7 @@ def get_user_key(user_id):
     return str(user_id)
 
 # ==============================
-# PARSER (៛ / $ ONLY)
+# PARSER (UNCHANGED)
 # ==============================
 def parse_message(text):
     pattern = r"([^\d]+?)\s*(\d+(?:[.,]\d+)?)\s*(៛|\$)"
@@ -73,7 +66,7 @@ def parse_message(text):
     return results
 
 # ==============================
-# VALIDATION (៛ / $ ONLY)
+# VALIDATION (UNCHANGED)
 # ==============================
 def validate(text, parsed):
     if parsed:
@@ -88,7 +81,7 @@ def validate(text, parsed):
     return None
 
 # ==============================
-# DATA OPERATIONS
+# DATA OPERATIONS (UNCHANGED)
 # ==============================
 def add_expense(user_key, entries):
     today = get_today()
@@ -139,7 +132,7 @@ def reset_month(user_key):
     return False
 
 # ==============================
-# FORMATTERS
+# FORMATTERS (UNCHANGED TEXT)
 # ==============================
 def format_entries(entries, show_date=False):
     lines = []
@@ -160,102 +153,78 @@ def format_total(khr, usd):
     return f"**💰 សរុប: {khr:,.0f} ៛ | {usd:.2f} $**"
 
 # ==============================
-# HANDLER (ADD EXPENSE)
+# API ENDPOINTS (NEW)
 # ==============================
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
 
-    user = update.message.from_user
-    text = update.message.text
-
-    if MY_USER_ID and user.id != MY_USER_ID:
-        return
-
+@app.post("/add")
+def api_add(user_id: str, text: str):
     parsed = parse_message(text)
     error = validate(text, parsed)
 
     if error:
-        await update.message.reply_text(error)
-        return
+        raise HTTPException(status_code=400, detail=error)
 
     if not parsed:
-        return
+        raise HTTPException(status_code=400, detail="Invalid input")
 
-    user_key = get_user_key(user.id)
+    user_key = get_user_key(user_id)
     add_expense(user_key, parsed)
 
     khr, usd = calculate(parsed)
 
-    await update.message.reply_text(
-        f"➕ បានបញ្ចូលជោគជ័យ: {khr:,.0f} ៛ | {usd:.2f} $ \n\nដើម្បីពិនិត្យទិន្នន័យថ្ងៃនេះ ចុច /today  \n\n ដើម្បីពិនិត្យទិន្នន័យខែនេះ/this_month"
-    )
+    return {
+        "message": f"➕ បានបញ្ចូលជោគជ័យ: {khr:,.0f} ៛ | {usd:.2f} $",
+        "hint": "ដើម្បីពិនិត្យទិន្នន័យថ្ងៃនេះ → /today | ខែនេះ → /this_month"
+    }
 
-# ==============================
-# COMMANDS
-# ==============================
-async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    user_key = get_user_key(user.id)
+
+@app.get("/today")
+def api_today(user_id: str):
+    user_key = get_user_key(user_id)
 
     entries = get_today_entries(user_key)
     khr, usd = calculate(entries)
 
-    msg = (
-        f"📊 {user.first_name} (ថ្ងៃនេះ)\n\n"
-        f"{format_entries(entries)}\n\n"
-        f"{format_total(khr, usd)}"
-    )
+    return {
+        "report": f"📊 ថ្ងៃនេះ\n\n{format_entries(entries)}\n\n{format_total(khr, usd)}"
+    }
 
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def cmd_this_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    user_key = get_user_key(user.id)
+@app.get("/this_month")
+def api_this_month(user_id: str):
+    user_key = get_user_key(user_id)
 
     entries = get_month_entries(user_key)
     khr, usd = calculate(entries)
 
-    msg = (
-        f"📊 {user.first_name} (ខែនេះ)\n\n"
-        f"{format_entries(entries, show_date=True)}\n\n"
-        f"{format_total(khr, usd)}"
-    )
+    return {
+        "report": f"📊 ខែនេះ\n\n{format_entries(entries, True)}\n\n{format_total(khr, usd)}"
+    }
 
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def cmd_reset_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_key = get_user_key(update.message.from_user.id)
+@app.delete("/reset_today")
+def api_reset_today(user_id: str):
+    user_key = get_user_key(user_id)
 
     if reset_today(user_key):
-        await update.message.reply_text("🧹 ទិន្នន័យត្រូវបានសម្អាត.")
-    else:
-        await update.message.reply_text("Nothing to reset.")
+        return {"message": "🧹 ទិន្នន័យត្រូវបានសម្អាត."}
 
-async def cmd_reset_this_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_key = get_user_key(update.message.from_user.id)
+    raise HTTPException(status_code=404, detail="Nothing to reset")
+
+
+@app.delete("/reset_this_month")
+def api_reset_this_month(user_id: str):
+    user_key = get_user_key(user_id)
 
     if reset_month(user_key):
-        await update.message.reply_text("🧹 ទិន្នន័យខែនេះត្រូវបានសម្អាត.")
-    else:
-        await update.message.reply_text("Nothing to reset.")
+        return {"message": "🧹 ទិន្នន័យខែនេះត្រូវបានសម្អាត."}
+
+    raise HTTPException(status_code=404, detail="Nothing to reset")
+
 
 # ==============================
-# MAIN
+# STARTUP
 # ==============================
-def main():
+@app.on_event("startup")
+def startup():
     load_data()
-
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    app.add_handler(CommandHandler("today", cmd_today))
-    app.add_handler(CommandHandler("this_month", cmd_this_month))
-    app.add_handler(CommandHandler("reset_today", cmd_reset_today))
-    app.add_handler(CommandHandler("reset_this_month", cmd_reset_this_month))
-
-    print("✅ Bot running...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
