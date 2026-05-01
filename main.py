@@ -19,7 +19,6 @@ CURRENCY_SYMBOL = {
     "USD": "$"
 }
 
-# ✅ NEW: Khmer button mapping
 COMMAND_MAP = {
     "សរុបថ្ងៃនេះ": "/today",
     "សរុបខែនេះ": "/this_month"
@@ -56,10 +55,10 @@ def get_user_key(user_id):
     return str(user_id or DEFAULT_USER_ID)
 
 # ==============================
-# PARSER
+# PARSER (FIXED)
 # ==============================
 def parse_message(text):
-    pattern = r"([^\d]+?)\s*(\d+(?:[.,]\d+)?)\s*(៛|\$)"
+    pattern = r"(.+?)\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(៛|\$)"
     matches = re.findall(pattern, text)
 
     results = []
@@ -71,7 +70,7 @@ def parse_message(text):
             amt = int(amt)
 
         results.append({
-            "category": cat.strip(),
+            "category": cat.strip(" :-"),
             "amount": amt,
             "currency": currency
         })
@@ -79,7 +78,7 @@ def parse_message(text):
     return results
 
 # ==============================
-# VALIDATION
+# VALIDATION (STRONG)
 # ==============================
 def validate(text, parsed):
     has_number = bool(re.search(r"\d+", text))
@@ -89,7 +88,7 @@ def validate(text, parsed):
         return "⚠️ សូមបញ្ចូលសញ្ញា ៛ ឬ $"
 
     if has_currency and not parsed:
-        return "⚠️ ទិន្នន័យមិនត្រឹមត្រូវ"
+        return "⚠️ format មិនត្រឹមត្រូវ (ឧ. កាហ្វេ 2$)"
 
     return None
 
@@ -130,7 +129,6 @@ def reset_today(user_key):
         data[user_key][today] = []
         save_data()
         return True
-
     return False
 
 def reset_month(user_key):
@@ -207,7 +205,7 @@ def send_message(chat_id, text, buttons=False):
 
 def extract_command(text):
     base = text.split()[0].split("@")[0]
-    return COMMAND_MAP.get(base, base)  # ✅ map Khmer → command
+    return COMMAND_MAP.get(base, base)
 
 # ==============================
 # WEBHOOK
@@ -255,7 +253,9 @@ async def telegram_webhook(req: Request):
             send_message(chat_id, error)
             return {"ok": True}
 
+        # 🔥 NEVER SILENT AGAIN
         if not parsed:
+            send_message(chat_id, "⚠️ មិនអាចយល់ទិន្នន័យបាន")
             return {"ok": True}
 
         add_expense(user_key, parsed)
@@ -270,7 +270,7 @@ async def telegram_webhook(req: Request):
     return {"ok": True}
 
 # ==============================
-# API + CRON (UNCHANGED)
+# API
 # ==============================
 @app.get("/")
 def root():
@@ -280,6 +280,9 @@ def root():
 def api_today(user_id: str = Query(default=DEFAULT_USER_ID)):
     return {"report": build_today_report(get_user_key(user_id))}
 
+# ==============================
+# CRON
+# ==============================
 @app.get("/cron/today")
 def cron_today(user_id: str = Query(default=DEFAULT_USER_ID)):
     user_key = get_user_key(user_id)
