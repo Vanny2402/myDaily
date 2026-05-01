@@ -226,19 +226,31 @@ def extract_command(text):
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     update = await req.json()
-    message = update.get("message")
+
+    print("🔥 UPDATE:", json.dumps(update))  # DEBUG
+
+    # ✅ FIX: support group + edited messages
+    message = (
+        update.get("message")
+        or update.get("edited_message")
+        or update.get("channel_post")
+    )
 
     if not message:
         return {"ok": True}
 
     chat_id = message.get("chat", {}).get("id")
-    text = message.get("text", "").strip()
+    text = (message.get("text") or "").strip()
+
+    print("📩 TEXT:", text)
 
     if not text:
         return {"ok": True}
 
     user_key = get_user_key(chat_id)
     command = extract_command(text)
+
+    print("⚙️ COMMAND:", command)
 
     if command.startswith("/today"):
         send_message(chat_id, build_today_report(user_key), buttons=True)
@@ -262,11 +274,12 @@ async def telegram_webhook(req: Request):
         parsed = parse_message(text)
         error = validate(text, parsed)
 
+        print("🔍 PARSED:", parsed)
+
         if error:
             send_message(chat_id, error)
             return {"ok": True}
 
-        # ✅ IMPORTANT: no silent behavior
         if not parsed:
             send_message(chat_id, "⚠️ មិនអាចយល់ទិន្នន័យបាន")
             return {"ok": True}
@@ -281,7 +294,6 @@ async def telegram_webhook(req: Request):
         )
 
     return {"ok": True}
-
 # ==============================
 # API
 # ==============================
