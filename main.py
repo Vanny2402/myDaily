@@ -224,12 +224,14 @@ def send_message(chat_id, text, buttons=False):
 def extract_command(text):
     text = text.strip()
 
-    if text.startswith("សរុបថ្ងៃនេះ"):
+    # ✅ Khmer commands
+    if text.startswith("ថ្ងៃនេះ") or text.startswith("សរុបថ្ងៃនេះ"):
         return "/today"
 
-    if text.startswith("សរុបខែនេះ"):
+    if text.startswith("ខែនេះ") or text.startswith("សរុបខែនេះ"):
         return "/this_month"
 
+    # ✅ fallback (real slash command)
     base = text.split()[0].split("@")[0]
     return base
 
