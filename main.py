@@ -59,7 +59,9 @@ def get_user_key(user_id):
 # PARSER (KEEP ORIGINAL – STABLE)
 # ==============================
 def parse_message(text):
-    pattern = r"([^\d]+?)\s*(\d+(?:[.,]\d+)?)\s*(៛|\$)"
+    text = text.replace(":", " ").replace("-", " ")
+
+    pattern = r"(.+?)\s+(\d+(?:[.,]\d+)?)\s*(៛|\$)"
     matches = re.findall(pattern, text)
 
     results = []
@@ -206,8 +208,17 @@ def send_message(chat_id, text, buttons=False):
         print("Telegram error:", e)
 
 def extract_command(text):
+    text = text.strip()
+
+    if text.startswith("សរុបថ្ងៃនេះ"):
+        return "/today"
+
+    if text.startswith("សរុបខែនេះ"):
+        return "/this_month"
+
     base = text.split()[0].split("@")[0]
-    return COMMAND_MAP.get(base, base)
+    return base
+
 
 # ==============================
 # WEBHOOK
@@ -229,10 +240,10 @@ async def telegram_webhook(req: Request):
     user_key = get_user_key(chat_id)
     command = extract_command(text)
 
-    if command == "/today":
+    if command.startswith("/today"):
         send_message(chat_id, build_today_report(user_key), buttons=True)
 
-    elif command == "/this_month":
+    elif command.startswith("/this_month"):
         send_message(chat_id, build_month_report(user_key), buttons=True)
 
     elif command == "/reset_today":
