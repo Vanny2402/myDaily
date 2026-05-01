@@ -58,10 +58,25 @@ def get_user_key(user_id):
 # ==============================
 # PARSER (KEEP ORIGINAL – STABLE)
 # ==============================
+def khmer_to_arabic(text):
+    khmer_nums = "០១២៣៤៥៦៧៨៩"
+    arabic_nums = "0123456789"
+
+    for k, a in zip(khmer_nums, arabic_nums):
+        text = text.replace(k, a)
+
+    return text
+
+
 def parse_message(text):
+    # ✅ convert Khmer numbers → English
+    text = khmer_to_arabic(text)
+
+    # ✅ normalize text
     text = text.replace(":", " ").replace("-", " ")
 
-    pattern = r"(.+?)\s+(\d+(?:[.,]\d+)?)\s*(៛|\$)"
+    # ✅ support no-space + mixed input
+    pattern = r"(.+?)(\d+(?:[.,]\d+)?)\s*(៛|\$)"
     matches = re.findall(pattern, text)
 
     results = []
