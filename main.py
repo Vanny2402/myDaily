@@ -87,12 +87,11 @@ def validate(text, parsed):
     has_number = bool(re.search(r"\d+", text))
     has_currency = bool(re.search(r"(៛|\$)", text))
 
+    # ❌ Only block when number exists but no currency
     if has_number and not has_currency:
         return "⚠️ សូមបញ្ចូលសញ្ញា ៛ ឬ $"
 
-    if has_currency and not parsed:
-        return "⚠️ ទិន្នន័យមិនត្រឹមត្រូវ"
-
+    # ✅ otherwise ALWAYS allow
     return None
 
 # ==============================
