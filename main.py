@@ -1,13 +1,14 @@
 import re
 import json
+import os
 import requests
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Request, Query
 
 # ==============================
 # CONFIG
 # ==============================
-TOKEN = "8753319762:AAEfunhd45eHtyvS5Z7EaTZd0LkoJXcA8PI"
+TOKEN = os.getenv("TELEGRAM_TOKEN", "8672820897:AAFIaV8L9LhA4hJqffLp8u7JCGyyWdJUFxY")
 TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
 
 DATA_FILE = "data.json"
@@ -18,13 +19,12 @@ CURRENCY_SYMBOL = {
     "USD": "$"
 }
 
-app = FastAPI()
+app = FastAPI(title="Expense Bot API")
+data = {}
 
 # ==============================
 # STORAGE
 # ==============================
-data = {}
-
 def load_data():
     global data
     try:
@@ -38,7 +38,7 @@ def save_data():
         json.dump(data, f)
 
 # ==============================
-# HELPERS
+# TIME HELPERS
 # ==============================
 def get_today():
     return datetime.now().strftime("%Y-%m-%d")
@@ -72,18 +72,12 @@ def parse_message(text):
 
     return results
 
-# ==============================
-# VALIDATION
-# ==============================
 def validate(text, parsed):
     if parsed:
         return None
 
-    has_number = re.search(r"\d+", text)
-    has_symbol = re.search(r"(៛|\$)", text)
-
-    if has_number and not has_symbol:
-        return "⚠️ ទិន្នន័យមិនត្រូវបានបញ្ចូល។ សូមពិនត្យសញ្ញាឡើងវិញ (៛ ឬ $)\n\nឧទាហរណ៍: ទិញបាយ 2$ ឬ ទិញបាយ 8000៛"
+    if re.search(r"\d+", text) and not re.search(r"(៛|\$)", text):
+        return "⚠️ សូមបញ្ចូលសញ្ញា ៛ ឬ $"
 
     return None
 
@@ -92,11 +86,7 @@ def validate(text, parsed):
 # ==============================
 def add_expense(user_key, entries):
     today = get_today()
-
-    data.setdefault(user_key, {})
-    data[user_key].setdefault(today, [])
-
-    data[user_key][today].extend(entries)
+    data.setdefault(user_key, {}).setdefault(today, []).extend(entries)
     save_data()
 
 def get_today_entries(user_key):
@@ -131,21 +121,23 @@ def reset_today(user_key):
 def reset_month(user_key):
     month = get_month()
     if user_key in data:
-        keys = [d for d in data[user_key] if d.startswith(month)]
-        for k in keys:
-            del data[user_key][k]
+        for d in list(data[user_key].keys()):
+            if d.startswith(month):
+                del data[user_key][d]
         save_data()
         return True
     return False
 
 # ==============================
-# FORMATTERS
+# FORMAT
 # ==============================
 def format_entries(entries, show_date=False):
-    lines = []
+    if not entries:
+        return "មិនមានទិន្នន័យ!"
 
+    lines = []
     for e in entries:
-        symbol = CURRENCY_SYMBOL.get(e["currency"], e["currency"])
+        symbol = CURRENCY_SYMBOL[e["currency"]]
         amount = f"{e['amount']:,.0f}" if isinstance(e["amount"], int) else f"{e['amount']:.2f}"
 
         if show_date:
@@ -153,13 +145,13 @@ def format_entries(entries, show_date=False):
         else:
             lines.append(f"{e['category']} {amount} {symbol}")
 
-    return "\n".join(lines) if lines else "មិនមានទិន្នន័យ!"
+    return "\n".join(lines)
 
 def format_total(khr, usd):
-    return f"**💰 សរុប: {khr:,.0f} ៛ | {usd:.2f} $**"
+    return f"💰 សរុប: {khr:,.0f} ៛ | {usd:.2f} $"
 
 # ==============================
-# REPORT BUILDERS
+# REPORT
 # ==============================
 def build_today_report(user_key):
     entries = get_today_entries(user_key)
@@ -172,75 +164,107 @@ def build_month_report(user_key):
     return f"📊 ខែនេះ\n\n{format_entries(entries, True)}\n\n{format_total(khr, usd)}"
 
 # ==============================
-# TELEGRAM SEND
+# TELEGRAM
 # ==============================
 def send_message(chat_id, text):
-    requests.post(f"{TELEGRAM_API}/sendMessage", json={
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    })
+    try:
+        requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=10
+        )
+    except Exception as e:
+        print("Telegram error:", e)
+
+def extract_command(text):
+    return text.split()[0].split("@")[0]
 
 # ==============================
-# TELEGRAM WEBHOOK
+# WEBHOOK
 # ==============================
 @app.post("/webhook")
-async def telegram_webhook(update: dict):
-    if "message" not in update:
+async def telegram_webhook(req: Request):
+    update = await req.json()
+    message = update.get("message")
+
+    if not message:
         return {"ok": True}
 
-    message = update["message"]
-    chat_id = message["chat"]["id"]
-    text = message.get("text", "")
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "").strip()
+
+    if not text:
+        return {"ok": True}
 
     user_key = get_user_key(chat_id)
+    command = extract_command(text)
 
-    # COMMANDS
-    if text == "/today":
+    if command == "/today":
         send_message(chat_id, build_today_report(user_key))
-        return {"ok": True}
 
-    if text == "/this_month":
+    elif command == "/this_month":
         send_message(chat_id, build_month_report(user_key))
-        return {"ok": True}
 
-    if text == "/reset_today":
-        send_message(chat_id, "🧹 ទិន្នន័យត្រូវបានសម្អាត." if reset_today(user_key) else "Nothing to reset")
-        return {"ok": True}
+    elif command == "/reset_today":
+        send_message(chat_id, "🧹 Done" if reset_today(user_key) else "Nothing to reset")
 
-    if text == "/reset_this_month":
-        send_message(chat_id, "🧹 ទិន្នន័យខែនេះត្រូវបានសម្អាត." if reset_month(user_key) else "Nothing to reset")
-        return {"ok": True}
+    elif command == "/reset_this_month":
+        send_message(chat_id, "🧹 Month cleared" if reset_month(user_key) else "Nothing to reset")
 
-    # NORMAL MESSAGE
-    parsed = parse_message(text)
-    error = validate(text, parsed)
+    else:
+        parsed = parse_message(text)
+        error = validate(text, parsed)
 
-    if error:
-        send_message(chat_id, error)
-        return {"ok": True}
+        if error:
+            send_message(chat_id, error)
+            return {"ok": True}
 
-    if not parsed:
-        return {"ok": True}
+        if not parsed:
+            return {"ok": True}
 
-    add_expense(user_key, parsed)
-    khr, usd = calculate(parsed)
+        add_expense(user_key, parsed)
+        khr, usd = calculate(parsed)
 
-    send_message(
-        chat_id,
-        f"➕ បានបញ្ចូលជោគជ័យ: {khr:,.0f} ៛ | {usd:.2f} $\n\n"
-        f"ដើម្បីពិនិត្យទិន្នន័យថ្ងៃនេះ ចុច /today\n\n"
-        f"ដើម្បីពិនិត្យទិន្នន័យខែនេះ /this_month"
-    )
+        send_message(
+            chat_id,
+            f"➕ {khr:,.0f} ៛ | {usd:.2f} $\n\n/today | /this_month"
+        )
 
     return {"ok": True}
 
 # ==============================
-# API (OPTIONAL)
+# PUBLIC API
 # ==============================
+@app.get("/")
+def root():
+    return {"status": "running"}
+
 @app.get("/today")
 def api_today(user_id: str = Query(default=DEFAULT_USER_ID)):
     return {"report": build_today_report(get_user_key(user_id))}
+
+# ==============================
+# CRON APIs
+# ==============================
+@app.get("/cron/today")
+def cron_today(user_id: str = Query(default=DEFAULT_USER_ID)):
+    user_key = get_user_key(user_id)
+    entries = get_today_entries(user_key)
+    khr, usd = calculate(entries)
+
+    return {
+        "date": get_today(),
+        "total_khr": khr,
+        "total_usd": usd,
+        "entries": entries
+    }
+
+@app.get("/cron/send_today")
+def cron_send_today(user_id: str):
+    user_key = get_user_key(user_id)
+    report = build_today_report(user_key)
+    send_message(user_id, report)
+    return {"status": "sent"}
 
 # ==============================
 # STARTUP
