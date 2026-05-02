@@ -221,17 +221,6 @@ def handle_message(message):
     if not text:
         return
 
-    # FIX: in groups, only respond to messages that contain a command OR a currency symbol
-    # This prevents the bot from trying to parse every single message in a busy group
-    is_command = text.startswith("/") or any(
-        text.startswith(k) for k in ["ថ្ងៃនេះ", "សរុបថ្ងៃនេះ", "ខែនេះ", "សរុបខែនេះ"]
-    )
-    has_currency = bool(re.search(r"(៛|\$)", text))
-
-    if chat_type in ("group", "supergroup") and not is_command and not has_currency:
-        print("⏭️ SKIPPED: group message with no command/currency")
-        return
-
     user_key = get_user_key(user_id)
     command = extract_command(text)
 
@@ -266,9 +255,7 @@ def handle_message(message):
             return
 
         if not parsed:
-            # Only reply with error in private chat — avoid noise in groups
-            if chat_type == "private":
-                send_message(chat_id, "⚠️ មិនអាចយល់ទិន្នន័យបាន")
+            send_message(chat_id, "⚠️ មិនអាចយល់ទិន្នន័យបាន")
             return
 
         add_expense(user_key, parsed)
