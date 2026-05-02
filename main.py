@@ -19,12 +19,6 @@ CURRENCY_SYMBOL = {
     "USD": "$"
 }
 
-# Khmer button mapping (SAFE)
-COMMAND_MAP = {
-    "សរុបថ្ងៃនេះ": "/today",
-    "សរុបខែនេះ": "/this_month"
-}
-
 app = FastAPI()
 data = {}
 
@@ -36,7 +30,7 @@ def load_data():
     try:
         with open(DATA_FILE, "r") as f:
             data = json.load(f)
-    except:
+    except Exception:
         data = {}
 
 def save_data():
@@ -56,26 +50,18 @@ def get_user_key(user_id):
     return str(user_id or DEFAULT_USER_ID)
 
 # ==============================
-# PARSER (KEEP ORIGINAL – STABLE)
+# PARSER
 # ==============================
 def khmer_to_arabic(text):
     khmer_nums = "០១២៣៤៥៦៧៨៩"
     arabic_nums = "0123456789"
-
     for k, a in zip(khmer_nums, arabic_nums):
         text = text.replace(k, a)
-
     return text
 
-
 def parse_message(text):
-    # ✅ convert Khmer numbers → English
     text = khmer_to_arabic(text)
-
-    # ✅ normalize text
     text = text.replace(":", " ").replace("-", " ")
-
-    # ✅ support no-space + mixed input
     pattern = r"(.+?)(\d+(?:[.,]\d+)?)\s*(៛|\$)"
     matches = re.findall(pattern, text)
 
@@ -83,30 +69,23 @@ def parse_message(text):
     for cat, amt, symbol in matches:
         amt = float(amt.replace(",", ""))
         currency = "KHR" if symbol == "៛" else "USD"
-
         if amt.is_integer():
             amt = int(amt)
-
         results.append({
             "category": cat.strip(),
             "amount": amt,
             "currency": currency
         })
-
     return results
 
 # ==============================
-# VALIDATION (FIXED)
+# VALIDATION
 # ==============================
 def validate(text, parsed):
     has_number = bool(re.search(r"\d+", text))
     has_currency = bool(re.search(r"(៛|\$)", text))
-
-    # ❌ Only block when number exists but no currency
     if has_number and not has_currency:
         return "⚠️ សូមបញ្ចូលសញ្ញា ៛ ឬ $"
-
-    # ✅ otherwise ALWAYS allow
     return None
 
 # ==============================
@@ -123,14 +102,12 @@ def get_today_entries(user_key):
 def get_month_entries(user_key):
     month = get_month()
     result = []
-
     for d, entries in data.get(user_key, {}).items():
         if d.startswith(month):
             for e in entries:
                 item = e.copy()
                 item["date"] = d
                 result.append(item)
-
     return result
 
 def calculate(entries):
@@ -138,11 +115,9 @@ def calculate(entries):
     usd = sum(e["amount"] for e in entries if e["currency"] == "USD")
     return khr, usd
 
-# ✅ FIXED RESET
 def reset_today(user_key):
     today = get_today()
     entries = data.get(user_key, {}).get(today, [])
-
     if entries:
         data[user_key][today] = []
         save_data()
@@ -152,16 +127,13 @@ def reset_today(user_key):
 def reset_month(user_key):
     month = get_month()
     found = False
-
     if user_key in data:
         for d in list(data[user_key].keys()):
             if d.startswith(month):
                 del data[user_key][d]
                 found = True
-
     if found:
         save_data()
-
     return found
 
 # ==============================
@@ -175,12 +147,10 @@ def format_entries(entries, show_date=False):
     for e in entries:
         symbol = CURRENCY_SYMBOL[e["currency"]]
         amount = f"{e['amount']:,.0f}" if isinstance(e["amount"], int) else f"{e['amount']:.2f}"
-
         if show_date:
             lines.append(f"{e['date']} - {e['category']} {amount} {symbol}")
         else:
             lines.append(f"{e['category']} {amount} {symbol}")
-
     return "\n".join(lines)
 
 def format_total(khr, usd):
@@ -207,7 +177,6 @@ def send_message(chat_id, text, buttons=False):
         "chat_id": chat_id,
         "text": text
     }
-
     if buttons:
         payload["reply_markup"] = {
             "keyboard": [
@@ -215,55 +184,55 @@ def send_message(chat_id, text, buttons=False):
             ],
             "resize_keyboard": True
         }
-
     try:
-        requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
+        res = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
+        print("📤 SEND RESULT:", res.status_code, res.text)
     except Exception as e:
-        print("Telegram error:", e)
+        print("❌ Telegram error:", e)
 
 def extract_command(text):
     text = text.strip()
 
-    # ✅ Khmer commands
+    # Khmer button commands
     if text.startswith("ថ្ងៃនេះ") or text.startswith("សរុបថ្ងៃនេះ"):
         return "/today"
-
     if text.startswith("ខែនេះ") or text.startswith("សរុបខែនេះ"):
         return "/this_month"
 
-    # ✅ fallback (real slash command)
+    # Slash commands (strip @botname suffix for group compatibility)
     base = text.split()[0].split("@")[0]
     return base
 
-
 # ==============================
-# WEBHOOK
+# MESSAGE HANDLER
 # ==============================
-@app.post("/webhook")
-async def telegram_webhook(req: Request):
-    update = await req.json()
-
-    print("🔥 UPDATE:", json.dumps(update))  # DEBUG
-
-    # ✅ FIX: support group + edited messages
-    message = (
-        update.get("message")
-        or update.get("edited_message")
-        or update.get("channel_post")
-    )
-
-    if not message:
-        return {"ok": True}
-
+def handle_message(message):
     chat_id = message.get("chat", {}).get("id")
+    chat_type = message.get("chat", {}).get("type", "private")  # private / group / supergroup
+
+    # FIX: always use the actual sender's user_id for per-user data
+    sender = message.get("from", {})
+    user_id = sender.get("id") or chat_id  # fallback to chat_id if no sender (channel posts)
+
     text = (message.get("text") or "").strip()
 
-    print("📩 TEXT:", text)
+    print(f"📩 TEXT: {text} | CHAT TYPE: {chat_type} | USER ID: {user_id} | CHAT ID: {chat_id}")
 
     if not text:
-        return {"ok": True}
+        return
 
-    user_key = get_user_key(chat_id)
+    # FIX: in groups, only respond to messages that contain a command OR a currency symbol
+    # This prevents the bot from trying to parse every single message in a busy group
+    is_command = text.startswith("/") or any(
+        text.startswith(k) for k in ["ថ្ងៃនេះ", "សរុបថ្ងៃនេះ", "ខែនេះ", "សរុបខែនេះ"]
+    )
+    has_currency = bool(re.search(r"(៛|\$)", text))
+
+    if chat_type in ("group", "supergroup") and not is_command and not has_currency:
+        print("⏭️ SKIPPED: group message with no command/currency")
+        return
+
+    user_key = get_user_key(user_id)
     command = extract_command(text)
 
     print("⚙️ COMMAND:", command)
@@ -294,22 +263,43 @@ async def telegram_webhook(req: Request):
 
         if error:
             send_message(chat_id, error)
-            return {"ok": True}
+            return
 
         if not parsed:
-            send_message(chat_id, "⚠️ មិនអាចយល់ទិន្នន័យបាន")
-            return {"ok": True}
+            # Only reply with error in private chat — avoid noise in groups
+            if chat_type == "private":
+                send_message(chat_id, "⚠️ មិនអាចយល់ទិន្នន័យបាន")
+            return
 
         add_expense(user_key, parsed)
         khr, usd = calculate(parsed)
-
         send_message(
             chat_id,
-            f"បន្ថែម {khr:,.0f} ៛ | {usd:.2f} $",
+            f"✅ បន្ថែម {khr:,.0f} ៛ | {usd:.2f} $",
             buttons=True
         )
 
+# ==============================
+# WEBHOOK
+# ==============================
+@app.post("/webhook")
+async def telegram_webhook(req: Request):
+    update = await req.json()
+    print("🔥 UPDATE:", json.dumps(update))
+
+    # Support normal messages, edited messages, and channel posts
+    message = (
+        update.get("message")
+        or update.get("edited_message")
+        or update.get("channel_post")
+    )
+
+    if not message:
+        return {"ok": True}
+
+    handle_message(message)
     return {"ok": True}
+
 # ==============================
 # API
 # ==============================
