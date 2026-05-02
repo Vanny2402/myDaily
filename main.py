@@ -26,7 +26,7 @@ data = {}
 # STORAGE
 # ==============================
 def load_data():
-    global data
+    global data 
     try:
         with open(DATA_FILE, "r") as f:
             data = json.load(f)
