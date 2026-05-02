@@ -190,7 +190,20 @@ def build_month_report(user_key):
     entries = get_month_entries(user_key)
     khr, usd = calculate(entries)
     month = get_month()
-    return f"📊 ខែនេះ ({month})\n\n{format_entries_grouped(entries)}\n\n{format_total(khr, usd)}"
+
+    if not entries:
+        return f"📊 ខែនេះ ({month})\n\nមិនមានទិន្នន័យ!"
+
+    lines = []
+    for e in entries:
+        symbol = CURRENCY_SYMBOL[e["currency"]]
+        amount = f"{e['amount']:,.0f}" if isinstance(e["amount"], int) else f"{e['amount']:.2f}"
+        lines.append(f"{e['date']} : {e['category']} {amount}{symbol}")
+
+    body = "\n".join(lines)
+
+    return f"📊 ខែនេះ ({month})\n\n{body}\n\n{format_total(khr, usd)}"
+
 
 # ==============================
 # TELEGRAM — split long messages
