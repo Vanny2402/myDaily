@@ -8,7 +8,10 @@ from fastapi import FastAPI, Request, Query
 # ==============================
 # CONFIG
 # ==============================
-TOKEN = os.getenv("TELEGRAM_TOKEN", "8791356588:AAG_vqiIrrwBKEMeqYvAACEE7LM2B2V3Bc8")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TOKEN:
+    raise RuntimeError("❌ TELEGRAM_TOKEN environment variable is not set!")
+
 TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
 
 DATA_FILE = "data.json"
