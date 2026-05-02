@@ -162,7 +162,6 @@ def format_entries_grouped(entries):
     if not entries:
         return "មិនមានទិន្នន័យ!"
 
-    # Group by category + currency
     groups = {}
     for e in entries:
         key = (e["category"], e["currency"])
@@ -241,7 +240,7 @@ def handle_message(message):
     chat_type = message.get("chat", {}).get("type", "private")
 
     sender = message.get("from", {})
-    user_id = sender.get("id") or chat_id
+    user_id = chat_id
 
     text = (message.get("text") or "").strip()
 
@@ -288,10 +287,11 @@ def handle_message(message):
             return
 
         add_expense(user_key, parsed)
-        khr, usd = calculate(parsed)
+
+        # ✅ CHANGED HERE: return monthly report instead of "added" message
         send_message(
             chat_id,
-            f"✅ បន្ថែម {khr:,.0f} ៛ | {usd:.2f} $",
+            build_month_report(user_key),
             buttons=True
         )
 
