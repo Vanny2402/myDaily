@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request, Query
 # ==============================
 # CONFIG
 # ==============================
-TOKEN = os.getenv("TELEGRAM_TOKEN", "8672820897:AAFIaV8L9LhA4hJqffLp8u7JCGyyWdJUFxY")
+TOKEN = os.getenv("TELEGRAM_TOKEN", "8791356588:AAG_vqiIrrwBKEMeqYvAACEE7LM2B2V3Bc8")
 TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
 
 DATA_FILE = "data.json"
