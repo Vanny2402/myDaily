@@ -16,6 +16,7 @@ TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
 
 DATA_FILE = "data.json"
 DEFAULT_USER_ID = "1"
+MAX_MESSAGE_LENGTH = 4000
 
 CURRENCY_SYMBOL = {
     "KHR": "៛",
@@ -29,7 +30,7 @@ data = {}
 # STORAGE
 # ==============================
 def load_data():
-    global data 
+    global data
     try:
         with open(DATA_FILE, "r") as f:
             data = json.load(f)
@@ -156,6 +157,25 @@ def format_entries(entries, show_date=False):
             lines.append(f"{e['category']} {amount} {symbol}")
     return "\n".join(lines)
 
+def format_entries_grouped(entries):
+    """Group entries by category and sum amounts — for /this_month"""
+    if not entries:
+        return "មិនមានទិន្នន័យ!"
+
+    # Group by category + currency
+    groups = {}
+    for e in entries:
+        key = (e["category"], e["currency"])
+        groups[key] = groups.get(key, 0) + e["amount"]
+
+    lines = []
+    for (cat, currency), total in groups.items():
+        symbol = CURRENCY_SYMBOL[currency]
+        amount = f"{int(total):,.0f}" if float(total).is_integer() else f"{total:.2f}"
+        lines.append(f"{cat}  {amount} {symbol}")
+
+    return "\n".join(lines)
+
 def format_total(khr, usd):
     return f"💰 សរុប: {khr:,.0f} ៛ | {usd:.2f} $"
 
@@ -170,39 +190,46 @@ def build_today_report(user_key):
 def build_month_report(user_key):
     entries = get_month_entries(user_key)
     khr, usd = calculate(entries)
-    return f"📊 ខែនេះ\n\n{format_entries(entries, True)}\n\n{format_total(khr, usd)}"
+    month = get_month()
+    return f"📊 ខែនេះ ({month})\n\n{format_entries_grouped(entries)}\n\n{format_total(khr, usd)}"
 
 # ==============================
-# TELEGRAM
+# TELEGRAM — split long messages
 # ==============================
 def send_message(chat_id, text, buttons=False):
-    payload = {
-        "chat_id": chat_id,
-        "text": text
-    }
-    if buttons:
-        payload["reply_markup"] = {
-            "keyboard": [
-                ["សរុបថ្ងៃនេះ", "សរុបខែនេះ"]
-            ],
-            "resize_keyboard": True
-        }
-    try:
-        res = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
-        print("📤 SEND RESULT:", res.status_code, res.text)
-    except Exception as e:
-        print("❌ Telegram error:", e)
+    chunks = []
+    while len(text) > MAX_MESSAGE_LENGTH:
+        split_at = text.rfind("\n", 0, MAX_MESSAGE_LENGTH)
+        if split_at == -1:
+            split_at = MAX_MESSAGE_LENGTH
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    chunks.append(text)
+
+    for i, chunk in enumerate(chunks):
+        is_last = (i == len(chunks) - 1)
+        payload = {"chat_id": chat_id, "text": chunk}
+
+        if buttons and is_last:
+            payload["reply_markup"] = {
+                "keyboard": [["សរុបថ្ងៃនេះ", "សរុបខែនេះ"]],
+                "resize_keyboard": True
+            }
+
+        try:
+            res = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
+            print(f"📤 SEND RESULT [{i+1}/{len(chunks)}]:", res.status_code, res.text)
+        except Exception as e:
+            print("❌ Telegram error:", e)
 
 def extract_command(text):
     text = text.strip()
 
-    # Khmer button commands
     if text.startswith("ថ្ងៃនេះ") or text.startswith("សរុបថ្ងៃនេះ"):
         return "/today"
     if text.startswith("ខែនេះ") or text.startswith("សរុបខែនេះ"):
         return "/this_month"
 
-    # Slash commands (strip @botname suffix for group compatibility)
     base = text.split()[0].split("@")[0]
     return base
 
@@ -211,11 +238,10 @@ def extract_command(text):
 # ==============================
 def handle_message(message):
     chat_id = message.get("chat", {}).get("id")
-    chat_type = message.get("chat", {}).get("type", "private")  # private / group / supergroup
+    chat_type = message.get("chat", {}).get("type", "private")
 
-    # FIX: always use the actual sender's user_id for per-user data
     sender = message.get("from", {})
-    user_id = sender.get("id") or chat_id  # fallback to chat_id if no sender (channel posts)
+    user_id = sender.get("id") or chat_id
 
     text = (message.get("text") or "").strip()
 
@@ -277,7 +303,6 @@ async def telegram_webhook(req: Request):
     update = await req.json()
     print("🔥 UPDATE:", json.dumps(update))
 
-    # Support normal messages, edited messages, and channel posts
     message = (
         update.get("message")
         or update.get("edited_message")
